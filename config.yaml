@@ -1,0 +1,14 @@
+categories:
+  - cs.CL
+  - cs.LG
+
+authors: []
+  # - Yoshua Bengio
+  # - Geoffrey Hinton
+
+storage:
+  db_path: data/garxiv.db
+  pdf_dir: data/pdfs
+  parsed_dir: data/parsed
+
+max_results_per_run: 100

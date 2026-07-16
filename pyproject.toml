@@ -1,0 +1,28 @@
+[project]
+name = "garxiv"
+version = "0.1.0"
+description = "RAG personnalisé pour la veille scientifique sur arXiv"
+authors = [
+    { name = "MerlinLedoux", email = "ledouxmerlin@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.13.4",
+    "pymupdf>=1.28.0",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+    "typer>=0.27.0",
+]
+
+[project.scripts]
+garxiv = "garxiv.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "responses>=0.25.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.29,<0.12.0"]
+build-backend = "uv_build"
