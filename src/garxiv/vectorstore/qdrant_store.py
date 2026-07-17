@@ -13,9 +13,27 @@ _DISTANCE_MAP = {
 
 
 def _build_filter(filters: dict) -> qm.Filter:
-    return qm.Filter(
-        must=[qm.FieldCondition(key=key, match=qm.MatchValue(value=value)) for key, value in filters.items()]
-    )
+    """Each value is either a scalar (strict equality) or a small DSL:
+    `{"any": [...]}` for "any of" matching, or `{"gte"/"lte"/"gt"/"lt": ...}`
+    for a datetime/numeric range."""
+    must = []
+    for key, value in filters.items():
+        if isinstance(value, dict):
+            if "any" in value:
+                must.append(qm.FieldCondition(key=key, match=qm.MatchAny(any=value["any"])))
+            elif any(op in value for op in ("gte", "lte", "gt", "lt")):
+                must.append(qm.FieldCondition(
+                    key=key,
+                    range=qm.DatetimeRange(
+                        gte=value.get("gte"), lte=value.get("lte"),
+                        gt=value.get("gt"), lt=value.get("lt"),
+                    ),
+                ))
+            else:
+                raise ValueError(f"unsupported filter operator for key '{key}': {value}")
+        else:
+            must.append(qm.FieldCondition(key=key, match=qm.MatchValue(value=value)))
+    return qm.Filter(must=must)
 
 
 class QdrantVectorStore(VectorStore):

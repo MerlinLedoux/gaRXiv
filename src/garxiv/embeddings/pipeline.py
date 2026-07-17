@@ -56,6 +56,7 @@ def run_embedding(config: Config, limit: int | None = None) -> EmbeddingSummary:
                     "page_start": row["page_start"],
                     "page_end": row["page_end"],
                     "categories": json.loads(doc["categories"]) if doc else [],
+                    "authors": json.loads(doc["authors"]) if doc else [],
                     "published_date": doc["published_date"] if doc else None,
                 })
 

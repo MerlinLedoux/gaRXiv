@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_arxiv_id ON chunks(arxiv_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    chunk_id UNINDEXED, text, tokenize = 'porter unicode61'
+);
 """
 
 
@@ -247,6 +251,10 @@ def insert_chunks(conn: sqlite3.Connection, records: list[ChunkRecord]) -> list[
                 now,
             ),
         )
+        conn.execute(
+            "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+            (chunk_id, record.text),
+        )
     conn.commit()
     return chunk_ids
 
@@ -257,6 +265,9 @@ def delete_chunks_for_document(conn: sqlite3.Connection, arxiv_id: str) -> list[
     ).fetchall()
     chunk_ids = [row["chunk_id"] for row in rows]
     conn.execute("DELETE FROM chunks WHERE arxiv_id = ?", (arxiv_id,))
+    if chunk_ids:
+        placeholders = ",".join("?" for _ in chunk_ids)
+        conn.execute(f"DELETE FROM chunks_fts WHERE chunk_id IN ({placeholders})", chunk_ids)
     conn.commit()
     return chunk_ids
 
@@ -307,3 +318,74 @@ def count_chunks_not_embedded(conn: sqlite3.Connection, arxiv_id: str) -> int:
         (arxiv_id,),
     ).fetchone()
     return row["n"]
+
+
+def search_fts(
+    conn: sqlite3.Connection,
+    fts_query: str,
+    limit: int,
+    categories: list[str] | None = None,
+    authors: list[str] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[sqlite3.Row]:
+    """Lexical search via SQLite FTS5. `fts_query` must already be a safe
+    MATCH expression (see retrieval.fts.sanitize_query) — no further
+    escaping is done here. `score` is -bm25(...), so higher is better,
+    consistent with VectorMatch.score (cosine similarity, higher is better).
+    """
+    sql = """
+        SELECT c.chunk_id AS chunk_id, c.arxiv_id AS arxiv_id, -bm25(chunks_fts) AS score
+        FROM chunks_fts
+        JOIN chunks c ON c.chunk_id = chunks_fts.chunk_id
+        JOIN documents d ON d.arxiv_id = c.arxiv_id
+        WHERE chunks_fts MATCH ?
+    """
+    params: list = [fts_query]
+
+    if categories:
+        placeholders = ",".join("?" for _ in categories)
+        sql += f" AND EXISTS (SELECT 1 FROM json_each(d.categories) WHERE value IN ({placeholders}))"
+        params.extend(categories)
+    if authors:
+        placeholders = ",".join("?" for _ in authors)
+        sql += f" AND EXISTS (SELECT 1 FROM json_each(d.authors) WHERE value IN ({placeholders}))"
+        params.extend(authors)
+    if date_from:
+        sql += " AND d.published_date >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND d.published_date <= ?"
+        params.append(date_to)
+
+    sql += " ORDER BY bm25(chunks_fts) ASC LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def get_chunks_by_ids(conn: sqlite3.Connection, chunk_ids: list[str]) -> list[sqlite3.Row]:
+    if not chunk_ids:
+        return []
+    placeholders = ",".join("?" for _ in chunk_ids)
+    return conn.execute(
+        f"SELECT * FROM chunks WHERE chunk_id IN ({placeholders})", chunk_ids
+    ).fetchall()
+
+
+def backfill_fts(conn: sqlite3.Connection) -> int:
+    """Reindex into chunks_fts any chunk present in `chunks` but missing from
+    the FTS5 index (e.g. chunks inserted before FTS5 support was added).
+    Safe to call repeatedly."""
+    rows = conn.execute(
+        """
+        SELECT c.chunk_id, c.text FROM chunks c
+        LEFT JOIN chunks_fts f ON f.chunk_id = c.chunk_id
+        WHERE f.chunk_id IS NULL
+        """
+    ).fetchall()
+    conn.executemany(
+        "INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)",
+        [(r["chunk_id"], r["text"]) for r in rows],
+    )
+    conn.commit()
+    return len(rows)

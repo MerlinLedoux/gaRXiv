@@ -66,7 +66,7 @@ def _seed_chunks(config: Config, n: int) -> list[str]:
         version=1,
         title="T",
         abstract="A",
-        authors=[],
+        authors=["A. Author"],
         categories=["cs.CL"],
         published_date="2024-01-01T00:00:00Z",
         updated_date="2024-01-01T00:00:00Z",
@@ -118,6 +118,8 @@ def test_run_embedding_batches_and_marks_chunks_embedded(tmp_path, monkeypatch):
     assert store.ensure_calls == [8]
     assert len(store.points) == 5
     assert [len(c) for c in provider.calls] == [2, 2, 1]
+    _, first_meta = store.points[chunk_ids[0]]
+    assert first_meta["authors"] == ["A. Author"]
 
     conn = db.get_connection(config.storage.db_path)
     for chunk_id in chunk_ids:

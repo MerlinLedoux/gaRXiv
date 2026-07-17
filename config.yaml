@@ -27,3 +27,22 @@ vector_store:
   backend: qdrant
   url: http://localhost:6333
   distance: cosine
+
+llm:
+  provider: ollama
+  model_name: llama3.2:3b
+  base_url: http://localhost:11434
+
+search:
+  top_k: 10
+  dense_top_k: 20
+  lexical_top_k: 20
+  hybrid_enabled: true
+  rrf_k: 60
+  query_transform:
+    mode: none        # none | multi_query | hyde
+    multi_query_count: 3
+  rerank:
+    enabled: false
+    model_name: BAAI/bge-reranker-base
+    top_k_candidates: 50
