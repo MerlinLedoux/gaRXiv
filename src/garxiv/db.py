@@ -28,7 +28,38 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
     watermark_date  TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chunks (
+    chunk_id            TEXT PRIMARY KEY,
+    arxiv_id             TEXT NOT NULL REFERENCES documents(arxiv_id),
+    chunk_index          INTEGER NOT NULL,
+    section_title        TEXT NOT NULL,
+    text                  TEXT NOT NULL,
+    token_count           INTEGER NOT NULL,
+    page_start            INTEGER,
+    page_end              INTEGER,
+    status                TEXT NOT NULL DEFAULT 'pending_embedding',
+    embedding_provider    TEXT,
+    embedding_dim         INTEGER,
+    error_message         TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_arxiv_id ON chunks(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status);
 """
+
+
+@dataclass
+class ChunkRecord:
+    arxiv_id: str
+    chunk_index: int
+    section_title: str
+    text: str
+    token_count: int
+    page_start: int | None
+    page_end: int | None
 
 
 @dataclass
@@ -93,6 +124,7 @@ def upsert_discovered(conn: sqlite3.Connection, entry: ArxivEntry) -> bool:
             ),
         )
     elif entry.version > existing["version"]:
+        delete_chunks_for_document(conn, entry.arxiv_id)
         conn.execute(
             """
             UPDATE documents SET
@@ -173,3 +205,105 @@ def set_watermark(conn: sqlite3.Connection, query_key: str, watermark_date: str)
         (query_key, watermark_date, _now()),
     )
     conn.commit()
+
+
+def get_document(conn: sqlite3.Connection, arxiv_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM documents WHERE arxiv_id = ?", (arxiv_id,)
+    ).fetchone()
+
+
+def mark_document_status(conn: sqlite3.Connection, arxiv_id: str, status: str) -> None:
+    conn.execute(
+        "UPDATE documents SET status = ?, updated_at = ? WHERE arxiv_id = ?",
+        (status, _now(), arxiv_id),
+    )
+    conn.commit()
+
+
+def insert_chunks(conn: sqlite3.Connection, records: list[ChunkRecord]) -> list[str]:
+    now = _now()
+    chunk_ids = []
+    for record in records:
+        chunk_id = f"{record.arxiv_id}::{record.chunk_index:04d}"
+        chunk_ids.append(chunk_id)
+        conn.execute(
+            """
+            INSERT INTO chunks (
+                chunk_id, arxiv_id, chunk_index, section_title, text,
+                token_count, page_start, page_end, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_embedding', ?, ?)
+            """,
+            (
+                chunk_id,
+                record.arxiv_id,
+                record.chunk_index,
+                record.section_title,
+                record.text,
+                record.token_count,
+                record.page_start,
+                record.page_end,
+                now,
+                now,
+            ),
+        )
+    conn.commit()
+    return chunk_ids
+
+
+def delete_chunks_for_document(conn: sqlite3.Connection, arxiv_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT chunk_id FROM chunks WHERE arxiv_id = ?", (arxiv_id,)
+    ).fetchall()
+    chunk_ids = [row["chunk_id"] for row in rows]
+    conn.execute("DELETE FROM chunks WHERE arxiv_id = ?", (arxiv_id,))
+    conn.commit()
+    return chunk_ids
+
+
+def get_chunks_by_status(
+    conn: sqlite3.Connection, status: str, limit: int | None = None
+) -> list[sqlite3.Row]:
+    query = "SELECT * FROM chunks WHERE status = ? ORDER BY arxiv_id, chunk_index"
+    params: tuple = (status,)
+    if limit is not None:
+        query += " LIMIT ?"
+        params = (status, limit)
+    return conn.execute(query, params).fetchall()
+
+
+def get_chunks_by_document(conn: sqlite3.Connection, arxiv_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM chunks WHERE arxiv_id = ? ORDER BY chunk_index", (arxiv_id,)
+    ).fetchall()
+
+
+def mark_chunks_embedded(
+    conn: sqlite3.Connection, chunk_ids: list[str], provider: str, dimension: int
+) -> None:
+    now = _now()
+    conn.executemany(
+        """
+        UPDATE chunks SET status = 'embedded', embedding_provider = ?,
+            embedding_dim = ?, error_message = NULL, updated_at = ?
+        WHERE chunk_id = ?
+        """,
+        [(provider, dimension, now, chunk_id) for chunk_id in chunk_ids],
+    )
+    conn.commit()
+
+
+def mark_chunk_error(conn: sqlite3.Connection, chunk_id: str, error_message: str) -> None:
+    conn.execute(
+        "UPDATE chunks SET error_message = ?, updated_at = ? WHERE chunk_id = ?",
+        (error_message, _now(), chunk_id),
+    )
+    conn.commit()
+
+
+def count_chunks_not_embedded(conn: sqlite3.Connection, arxiv_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM chunks WHERE arxiv_id = ? AND status != 'embedded'",
+        (arxiv_id,),
+    ).fetchone()
+    return row["n"]

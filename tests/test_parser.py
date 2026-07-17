@@ -26,6 +26,11 @@ def test_extract_structure_splits_sections(tmp_path):
     assert "Introduction" in titles
     assert "Methods" in titles
     assert "introduction body text" in structure["full_text"]
+    assert structure["page_count"] == 1
+
+    intro = next(s for s in structure["sections"] if s["title"] == "Introduction")
+    assert intro["lines"][0]["page"] == 0
+    assert all(line["page"] == 0 for section in structure["sections"] for line in section["lines"])
 
 
 def test_parse_pdf_writes_json(tmp_path):

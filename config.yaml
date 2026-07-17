@@ -12,3 +12,18 @@ storage:
   parsed_dir: data/parsed
 
 max_results_per_run: 100
+
+chunking:
+  target_tokens: 800
+  overlap_ratio: 0.125
+  min_chunk_tokens: 100
+
+embeddings:
+  provider: local_bge
+  model_name: BAAI/bge-small-en-v1.5
+  batch_size: 32
+
+vector_store:
+  backend: qdrant
+  url: http://localhost:6333
+  distance: cosine
