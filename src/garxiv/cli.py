@@ -7,7 +7,9 @@ from garxiv import db as db_module
 from garxiv.chunking.pipeline import run_chunking
 from garxiv.config import load_config
 from garxiv.embeddings.pipeline import run_embedding
+from garxiv.generation.pipeline import run_generation
 from garxiv.ingestion.pipeline import run_ingestion
+from garxiv.llm.base import LLMUnavailableError
 from garxiv.retrieval.pipeline import SearchFilters, run_search
 from garxiv.vectorstore import factory as vectorstore_factory
 from garxiv.embeddings import factory as embedding_factory
@@ -126,6 +128,60 @@ def search(
             f"(p.{m.get('page_start')}-{m.get('page_end')})"
         )
         typer.echo(f"   {snippet}...")
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(..., help="Question en langage naturel"),
+    top_k: int = typer.Option(10, "--top-k", help="Nombre de chunks récupérés (contexte)"),
+    category: list[str] = typer.Option(None, "--category", help="Filtre catégorie arXiv (répétable)"),
+    author: list[str] = typer.Option(None, "--author", help="Filtre auteur (répétable)"),
+    date_from: str = typer.Option(None, "--date-from", help="Date de publication min. (YYYY-MM-DD)"),
+    date_to: str = typer.Option(None, "--date-to", help="Date de publication max. (YYYY-MM-DD)"),
+    hybrid: bool = typer.Option(
+        None, "--hybrid/--no-hybrid", help="Active/désactive la recherche lexicale FTS5 (sinon config.yaml)"
+    ),
+    rerank: bool = typer.Option(
+        None, "--rerank/--no-rerank", help="Active/désactive le reranking (sinon config.yaml)"
+    ),
+    query_transform: str = typer.Option(
+        None, "--query-transform", help="none|multi_query|hyde (sinon config.yaml)"
+    ),
+    config_path: str = typer.Option("config.yaml", help="Chemin du fichier de config"),
+):
+    """Récupère les chunks pertinents puis fait générer une réponse par le LLM (Ollama), avec citations."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    config = load_config(config_path)
+
+    if hybrid is not None:
+        config.search.hybrid_enabled = hybrid
+    if rerank is not None:
+        config.search.rerank.enabled = rerank
+    if query_transform is not None:
+        config.search.query_transform.mode = query_transform
+
+    filters = SearchFilters(
+        categories=category or None,
+        authors=author or None,
+        date_from=date_from,
+        date_to=f"{date_to}T23:59:59Z" if date_to else None,
+    )
+
+    try:
+        result = run_generation(config, question, top_k=top_k, filters=filters)
+    except LLMUnavailableError as exc:
+        typer.echo(f"Erreur : LLM de génération indisponible ({exc})", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(result.answer)
+    if result.sources:
+        typer.echo("\nSources :")
+        for i, r in enumerate(result.sources, start=1):
+            m = r.metadata
+            typer.echo(
+                f"[{i}] {m['arxiv_id']} — {m['section_title']} "
+                f"(p.{m.get('page_start')}-{m.get('page_end')})"
+            )
 
 
 @app.command("fts-reindex")

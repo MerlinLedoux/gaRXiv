@@ -79,6 +79,11 @@ class SearchConfig(BaseModel):
     rerank: RerankConfig = Field(default_factory=RerankConfig)
 
 
+class GenerationConfig(BaseModel):
+    context_top_k: int = 5
+    max_chars_per_chunk: int = 1500
+
+
 class Config(BaseModel):
     categories: list[str]
     authors: list[str]
@@ -89,6 +94,7 @@ class Config(BaseModel):
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
 
 
 def load_config(path: Path | str = "config.yaml") -> Config:

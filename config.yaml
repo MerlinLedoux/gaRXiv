@@ -46,3 +46,7 @@ search:
     enabled: false
     model_name: BAAI/bge-reranker-base
     top_k_candidates: 50
+
+generation:
+  context_top_k: 5
+  max_chars_per_chunk: 1500
