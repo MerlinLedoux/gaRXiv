@@ -89,6 +89,7 @@ class Config(BaseModel):
     authors: list[str]
     storage: StorageConfig
     max_results_per_run: int
+    initial_lookback_days: int = 30
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     embeddings: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)

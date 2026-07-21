@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -38,6 +39,9 @@ def run_ingestion(
 
     query_key = _query_key(config)
     since = db.get_watermark(conn, query_key)
+    if since is None:
+        floor = datetime.now(timezone.utc) - timedelta(days=config.initial_lookback_days)
+        since = floor.strftime("%Y-%m-%dT%H:%M:%SZ")
     latest_seen = since
 
     for entry in arxiv_client.fetch_entries(

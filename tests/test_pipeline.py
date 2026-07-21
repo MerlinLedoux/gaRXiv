@@ -1,11 +1,13 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pymupdf
 import responses
 
+from garxiv import db
 from garxiv.config import Config, StorageConfig
 from garxiv.ingestion.arxiv_client import API_URL
-from garxiv.ingestion.pipeline import run_ingestion
+from garxiv.ingestion.pipeline import _query_key, run_ingestion
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -20,7 +22,7 @@ def _sample_pdf_bytes() -> bytes:
     return data
 
 
-def _make_config(tmp_path: Path) -> Config:
+def _make_config(tmp_path: Path, **kwargs) -> Config:
     return Config(
         categories=["cs.CL"],
         authors=[],
@@ -30,7 +32,19 @@ def _make_config(tmp_path: Path) -> Config:
             parsed_dir=tmp_path / "parsed",
         ),
         max_results_per_run=10,
+        **kwargs,
     )
+
+
+def _capture_fetch_entries(monkeypatch, entries=None):
+    calls: list[dict] = []
+
+    def fake_fetch_entries(categories, authors, since=None, max_results=None, session=None):
+        calls.append({"categories": categories, "authors": authors, "since": since, "max_results": max_results})
+        yield from (entries or [])
+
+    monkeypatch.setattr("garxiv.ingestion.pipeline.arxiv_client.fetch_entries", fake_fetch_entries)
+    return calls
 
 
 def _mock_arxiv_and_pdfs():
@@ -78,3 +92,41 @@ def test_second_run_skips_already_processed_documents(tmp_path):
     assert summary.downloaded == 0
     assert summary.parsed == 0
     assert summary.errors == 0
+
+
+def test_first_run_uses_lookback_floor_when_no_watermark_exists(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, initial_lookback_days=7)
+    calls = _capture_fetch_entries(monkeypatch, entries=[])
+
+    run_ingestion(config)
+
+    assert len(calls) == 1
+    since = calls[0]["since"]
+    assert since is not None
+    parsed = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    expected = datetime.now(timezone.utc) - timedelta(days=7)
+    assert abs((parsed - expected).total_seconds()) < 5
+
+
+def test_second_run_uses_stored_watermark_not_lookback_floor(tmp_path, monkeypatch):
+    config = _make_config(tmp_path)
+    conn = db.get_connection(config.storage.db_path)
+    db.set_watermark(conn, _query_key(config), "2024-06-01T00:00:00Z")
+    conn.close()
+
+    calls = _capture_fetch_entries(monkeypatch, entries=[])
+    run_ingestion(config)
+
+    assert calls[0]["since"] == "2024-06-01T00:00:00Z"
+
+
+def test_empty_first_run_still_persists_lookback_floor_as_watermark(tmp_path, monkeypatch):
+    config = _make_config(tmp_path)
+    _capture_fetch_entries(monkeypatch, entries=[])
+
+    run_ingestion(config)
+
+    conn = db.get_connection(config.storage.db_path)
+    watermark = db.get_watermark(conn, _query_key(config))
+    conn.close()
+    assert watermark is not None

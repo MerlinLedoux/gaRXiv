@@ -13,6 +13,11 @@ storage:
 
 max_results_per_run: 100
 
+# Sur une base fraîche (aucun watermark encore posé pour cette combinaison
+# categories/authors), borne le tout premier run aux N derniers jours au lieu
+# de repartir du fond de l'historique arXiv.
+initial_lookback_days: 30
+
 chunking:
   target_tokens: 800
   overlap_ratio: 0.125
